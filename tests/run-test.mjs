@@ -20,7 +20,6 @@ await esbuild.build({
   platform: "browser",
   plugins: [
     simplifyGlobalAPI({
-      bind: ["Object.keys"],
       pure: false,
       constructors: ["Object"],
     }),
