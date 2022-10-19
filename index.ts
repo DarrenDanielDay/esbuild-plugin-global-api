@@ -1,43 +1,91 @@
 import type { Loader, Plugin as ESBuildPlugin } from "esbuild";
 import { readFile } from "fs/promises";
 import { parse } from "path";
+import {
+  GlobalConstructorsWithStatic,
+  globalConstructorWithStatics,
+  globalVars,
+  GlobalVars,
+  isGlobalCtor,
+  isGlobalVar,
+  NormalNode,
+  ProxyHandleRule,
+} from "./global-definitions";
+const die = (msg?: string): never => {
+  throw new Error(msg);
+};
+type ProxyNamespaceRuleConfig = {
+  code?: string;
+  rule: ProxyHandleRule;
+  /**
+   * @default "(path) => !path.includes('node_modules')"
+   */
+  applyTo?: (path: string) => boolean;
+};
+type ProxyNamespaceRule = Required<ProxyNamespaceRuleConfig>;
+
+export const defaultApplyTo: NonNullable<ProxyNamespaceRuleConfig["applyTo"]> = (path: string) => !path.includes("node_modules");
+
+const defaultProxyNamespaceRule = (name: string): ProxyNamespaceRule => ({
+  code: "",
+  applyTo: defaultApplyTo,
+  rule: isGlobalCtor(name)
+    ? globalConstructorWithStatics[name]
+    : isGlobalVar(name)
+    ? globalVars[name]
+    : die(`Unknown global name ${name}`),
+});
+const patchProxyNamespaceRuleConfig = (config: ProxyNamespaceRuleConfig): ProxyNamespaceRule => ({
+  applyTo: config.applyTo ?? defaultApplyTo,
+  code: config.code ?? "",
+  rule: config.rule,
+});
+type ApplyMappingConfig<S extends string> = {
+  [K in S]: ProxyNamespaceRuleConfig;
+};
+
+type ApplyMapping = Record<string, ProxyNamespaceRule>;
+
+type ApplyRulesConfig<S extends string> = S[] | ApplyMappingConfig<S>;
 
 export type PluginOptions = {
   /**
    * The global constructor with static APIs you want to simplify, such as `Object`, `Array`, `URL`.
    *
-   * @default false
-   *
-   * If set to `false`, all variables will be included.
+   * @default ["Object"]
    *
    * **BE CAREFUL**, this option can break your code in some cases.
    */
-  constructors?: string[] | false;
+  constructors?: ApplyRulesConfig<GlobalConstructorsWithStatic>;
   /**
    * Similar to {@link constructors}, but for variables of object type.
    *
    * @default ['console']
    */
-  vars?: string[] | false;
+  vars?: ApplyRulesConfig<GlobalVars>;
   /**
-   * Whether to apply `.bind(<variable>)` for `this` context.
+   * @example
    *
-   * @default true
+   * {"React": { code: "import * as React from 'react';", members: { createElement: 'func-bind' } } }
    *
-   * Most global JavaScript APIs are not need to explicitly bind `this` context.
-   *
-   * If set to `true`, all functions will be appended with `.bind(<variable>)`.
-   *
-   * If set to a string array, such as `['Object.keys']`, only matched functions will be applied with `.bind(<variable>)`.
    */
-  bind?: boolean | string[];
+  lib?: {
+    [namespace: string]: ProxyNamespaceRule;
+  };
   /**
    * Whether to add "@__PURE__" comment in the build steps.
-   * 
+   *
    * @default true
    */
-  pure?: boolean
+  pure?: boolean;
 };
+export const defaultOptions: Required<PluginOptions> = {
+  constructors: ["Object"],
+  vars: ["console", "JSON", "Math", "Reflect"],
+  pure: true,
+  lib: {},
+};
+const pureComment = `/* @__PURE__ */`;
 
 /**
  * This plugin may break your code since it has a tricky implementation.
@@ -48,109 +96,112 @@ export type PluginOptions = {
 export const simplifyGlobalAPI = (options?: PluginOptions): ESBuildPlugin => {
   const pluginName = "esbuild-plugin-global-api";
   const proxyModule = `@${pluginName}/do-not-use-in-your-code`;
+  const createProxyUrl = (namespace: string) => `${proxyModule}-${namespace}`;
   return {
     name: pluginName,
     setup(builder) {
-      const { initialOptions } = builder;
-      const { platform } = initialOptions;
-      const defaultOptions: Required<PluginOptions> = {
-        constructors: false,
-        bind: true,
-        vars: ["console"],
-        pure: true,
-      };
-      const { constructors, vars, bind, pure } = Object.assign({}, defaultOptions, options);
-      const constructorPattern = /^[A-Z]/;
-      if (
-        !Array.isArray(constructors) ||
-        constructors.some((ctor) => typeof ctor !== "string" || !ctor.match(constructorPattern))
-      ) {
-        console.warn(`"constructors" should be an array of all strings starting with upper cases.`);
-      }
-      const globalContext = (() => {
-        if ((platform ?? "node") === "browser") {
-          const jsdom = require("jsdom");
-          const { JSDOM } = jsdom;
-          const dom = new JSDOM("");
-          return dom.window;
-        }
-        return typeof globalThis !== "undefined"
-          ? globalThis
-          : typeof global !== "undefined"
-          ? global
-          : (0, eval)("this");
-      })();
-      type TargetVariables = {
-        variable: string;
-        value: any;
-      };
-      const enumerateNames = (object: any): string[] => {
-        const result: string[] = [];
-        if (!object) {
-          return result;
-        }
-        const ownProperties = Object.getOwnPropertyDescriptors(object);
-        const isFunction = typeof object === "function";
-        const functionProps = new Set(["length", "name", "prototype"]);
-        for (const key in ownProperties) {
-          const descriptor = ownProperties[key];
-          if (isFunction && functionProps.has(key)) continue;
-          if (descriptor.get || descriptor.set) continue;
-          result.push(key);
-        }
-        return result;
-      };
-      const exportVariables: TargetVariables[] =
-        constructors && constructors.every((v) => typeof v === "string")
-          ? constructors.map<TargetVariables>((v) => {
-              return { variable: v, value: globalContext[v] };
-            })
-          : Object.entries(Object.getOwnPropertyDescriptors(globalContext)).reduce<TargetVariables[]>(
-              (total, [variable, descriptor]) => {
-                const globalVariableValue = descriptor.value;
-                if (variable.match(constructorPattern) && typeof globalVariableValue === "function") {
-                  total.push({
-                    variable,
-                    value: globalVariableValue,
-                  });
-                }
-                return total;
-              },
-              []
-            );
-      if (Array.isArray(vars)) {
-        for (const variable of vars) {
-          if (!(variable in globalContext)) {
-            console.warn(`Unknown variable: ${variable}`);
-            continue;
+      const {
+        initialOptions: { platform: _platform },
+      } = builder;
+      const platform = !_platform || _platform === "neutral" ? "node" : _platform;
+      const { constructors: _constructors, vars: _vars, lib: _lib } = Object.assign({}, defaultOptions, options);
+      const constructors = Array.isArray(_constructors)
+        ? _constructors.reduce<ApplyMapping>((acc, ctor) => {
+            const applyRule = defaultProxyNamespaceRule(ctor);
+            if (!applyRule) {
+              console.warn(`Unknown global constructor "${ctor}", ignored.`);
+              return acc;
+            }
+            acc[ctor] = applyRule;
+            return acc;
+          }, {})
+        : Object.entries(_constructors).reduce<ApplyMapping>((acc, [ctor, config]) => {
+            acc[ctor] = patchProxyNamespaceRuleConfig(config);
+            return acc;
+          }, {});
+      const vars = Array.isArray(_vars)
+        ? _vars.reduce<ApplyMapping>((acc, variable) => {
+            const applyRule = defaultProxyNamespaceRule(variable);
+            if (!applyRule) {
+              console.warn(`Unknown global variable "${variable}", ignored.`);
+              return acc;
+            }
+            acc[variable] = applyRule;
+            return acc;
+          }, {})
+        : Object.entries(_vars).reduce<ApplyMapping>((acc, [variable, config]) => {
+            acc[variable] = patchProxyNamespaceRuleConfig(config);
+            return acc;
+          }, {});
+      // Constructors and vars/functions are configured separately for further `new XXX()` transform rules (currently not implemented).
+      const lib = _lib ?? {};
+      const mergedNamespaces = Object.assign({}, constructors, vars, lib);
+      const namespaceEntries = Object.entries(mergedNamespaces);
+      const proxyMapping = namespaceEntries.reduce<
+        Record<
+          string,
+          {
+            url: string;
+            proxyNamespaceExportsScript: string;
+            proxyNamespaceImportsScript: string;
           }
-          exportVariables.push({
-            value: globalContext[variable],
-            variable,
-          });
-        }
-      }
-      const proxyScripts = exportVariables.reduce<Record<string, string>>((map, { variable, value }) => {
-        const names = enumerateNames(value);
-        if (!names.length) {
-          console.info(`Skipped global variable without any enumerable property: ${variable}`);
+        >
+      >((map, [namespace, { rule, code }]) => {
+        const url = createProxyUrl(namespace);
+        const varOnly = () => {
+          map[namespace] = {
+            url,
+            proxyNamespaceImportsScript: `import {${namespace}}from '${url}';`,
+            proxyNamespaceExportsScript: `${code}export const ${namespace}=${namespace};`,
+          };
           return map;
+        };
+        const basic = (node: NormalNode<any>) => {
+          switch (node.type) {
+            case "constructor":
+            case "object":
+              const keys = Object.keys(node.members);
+              const evalScripts = keys
+                .map((member) => {
+                  switch (node.members[member]!) {
+                    case "constant":
+                    case "func":
+                      return `const ${member}=${pureComment}${namespace}.${member};`;
+                    case "func-bind":
+                      return `const ${member}=${pureComment}${namespace}.${member}.bind(${namespace});`;
+                    default:
+                      // Ignore the property. Property read should be skipped in `applyTo`.
+                      return ``;
+                  }
+                })
+                .join("");
+              
+              map[namespace] = {
+                url,
+                proxyNamespaceImportsScript: `import * as ${namespace} from "${url}";`,
+                proxyNamespaceExportsScript: `${code}${evalScripts}export {${keys.join(",")}};`,
+              };
+              break;
+            case "func":
+              return varOnly();
+            default:
+              break;
+          }
+          return map;
+        };
+        if (rule === "noop" || rule.type === "func") {
+          return varOnly();
         }
-        const content = names
-          .map((name) => {
-            const isFunc = typeof value[name] === "function";
-            const memberExpression = `${variable}.${name}`;
-            return `export const ${name} = ${pure ? "/* @__PURE__ */" : ""} ${memberExpression}${
-              isFunc && (bind === true || (bind && bind.includes(memberExpression))) ? `.bind(${variable})` : ""
-            }`;
-          })
-          .join(";");
-        map[variable] = content;
-        return map;
+        if (rule.type === "platform") {
+          const detail = rule.diffs[platform];
+          if (detail === "noop") {
+            return varOnly();
+          } else {
+            return basic(detail);
+          }
+        }
+        return basic(rule);
       }, {});
-      const proxyImports = exportVariables
-        .map((target) => `import * as ${target.variable} from '${proxyModule}${target.variable}'`)
-        .join(";");
       const chars = [];
       for (let i = 0; i < proxyModule.length; i++) {
         chars.push(proxyModule[i]);
@@ -163,14 +214,21 @@ export const simplifyGlobalAPI = (options?: PluginOptions): ESBuildPlugin => {
           namespace: proxyModule,
         };
       });
-      builder.onLoad({ filter: anyPattern }, async ({ path }) => {
+      builder.onLoad({ filter: anyPattern, namespace: "file" }, async ({ path }) => {
+        const matchedNamespaceEntries = namespaceEntries.filter(([, { applyTo }]) => applyTo(path));
+        if (!matchedNamespaceEntries.length) {
+          return;
+        }
         const { ext } = parse(path);
-        if ([".js", ".ts", ".jsx", ".tsx"].includes(ext)) {
+        if ([".js", ".ts", ".jsx", ".tsx", ".cjs", ".cts", ".mjs", ".mts"].includes(ext)) {
           const content = await readFile(path);
-          // @ts-expect-error Dynamic Implementation
-          const loader: Loader = ext.slice(1);
+          const isTypeScript = ext.includes("t");
+          const isReact = ext.includes("x");
+          const loader: Loader = isTypeScript ? (isReact ? "tsx" : "ts") : isReact ? "jsx" : "js";
           return {
-            contents: `${proxyImports};
+            contents: `${matchedNamespaceEntries
+              .map(([namespace]) => proxyMapping[namespace].proxyNamespaceImportsScript)
+              .join("")}
 ${content}`,
             loader,
           };
@@ -179,14 +237,14 @@ ${content}`,
         return undefined;
       });
       builder.onLoad({ filter: pattern, namespace: proxyModule }, async ({ path }) => {
-        const variableName = path.replace(proxyModule, "");
-        if (variableName in proxyScripts) {
+        const variableName = path.replace(`${proxyModule}-`, "");
+        if (variableName in proxyMapping) {
           return {
-            contents: proxyScripts[variableName],
+            contents: proxyMapping[variableName].proxyNamespaceExportsScript,
             loader: "js",
           };
         }
-        return undefined;
+        return die(`Unexpected matched path: "${path}"`);
       });
     },
   };

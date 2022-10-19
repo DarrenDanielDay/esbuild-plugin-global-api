@@ -3,9 +3,28 @@
   "version": "0.1.0",
   "description": "An esbuild plugin for simplifying global API calls.",
   "main": "index.js",
+  "files": [
+    "index.js",
+    "index.js.map",
+    "index.ts",
+    "index.d.ts",
+    "index.d.ts.map",
+    "global-definitions.js",
+    "global-definitions.js.map",
+    "global-definitions.ts",
+    "global-definitions.d.ts",
+    "global-definitions.d.ts.map"
+  ],
   "scripts": {
     "test": "node ./tests/run-test.mjs",
     "build": "tsc -p ./tsconfig.json"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./global-definitions": {
+      "import": "./global-definitions.js",
+      "require": "./global-definitions.js"
+    }
   },
   "repository": {
     "type": "git",
