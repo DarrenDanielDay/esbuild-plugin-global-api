@@ -24,7 +24,8 @@ type ProxyNamespaceRuleConfig = {
 };
 type ProxyNamespaceRule = Required<ProxyNamespaceRuleConfig>;
 
-export const defaultApplyTo: NonNullable<ProxyNamespaceRuleConfig["applyTo"]> = (path: string) => !path.includes("node_modules");
+export const defaultApplyTo: NonNullable<ProxyNamespaceRuleConfig["applyTo"]> = (path: string) =>
+  !path.includes("node_modules");
 
 const defaultProxyNamespaceRule = (name: string): ProxyNamespaceRule => ({
   code: "",
@@ -175,7 +176,7 @@ export const simplifyGlobalAPI = (options?: PluginOptions): ESBuildPlugin => {
                   }
                 })
                 .join("");
-              
+
               map[namespace] = {
                 url,
                 proxyNamespaceImportsScript: `import * as ${namespace} from "${url}";`,
@@ -202,7 +203,7 @@ export const simplifyGlobalAPI = (options?: PluginOptions): ESBuildPlugin => {
         }
         return basic(rule);
       }, {});
-      const chars = [];
+      const chars: string[] = [];
       for (let i = 0; i < proxyModule.length; i++) {
         chars.push(proxyModule[i]);
       }
