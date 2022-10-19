@@ -2,19 +2,19 @@ import type { Loader, Plugin as ESBuildPlugin } from "esbuild";
 import { readFile } from "fs/promises";
 import { parse } from "path";
 import {
-  GlobalConstructorsWithStatic,
+  type GlobalConstructorsWithStatic,
   globalConstructorWithStatics,
   globalVars,
-  GlobalVars,
+  type GlobalVars,
   isGlobalCtor,
   isGlobalVar,
-  NormalNode,
-  ProxyHandleRule,
+  type NormalNode,
+  type ProxyHandleRule,
 } from "./global-definitions";
 const die = (msg?: string): never => {
   throw new Error(msg);
 };
-type ProxyNamespaceRuleConfig = {
+export type ProxyNamespaceRuleConfig = {
   code?: string;
   rule: ProxyHandleRule;
   /**
@@ -41,7 +41,7 @@ const patchProxyNamespaceRuleConfig = (config: ProxyNamespaceRuleConfig): ProxyN
   code: config.code ?? "",
   rule: config.rule,
 });
-type ApplyMappingConfig<S extends string> = {
+export type ApplyMappingConfig<S extends string> = {
   [K in S]: ProxyNamespaceRuleConfig;
 };
 

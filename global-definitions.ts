@@ -6,57 +6,55 @@ type AnyFunc = (...args: any[]) => any;
 type GlobalNames<Subtype> = {
   [K in StringKey<GlobalObject>]: GlobalObject[K] extends Subtype ? K : never;
 }[StringKey<GlobalObject>];
-type GlobalConstructors = GlobalNames<AnyConsturctor>;
+export type GlobalConstructors = GlobalNames<AnyConsturctor>;
 export type GlobalVars = Exclude<GlobalNames<object>, GlobalConstructors>;
 export type GlobalConstructorsWithStatic = ExtractToUpperCase<
   {
     [K in GlobalConstructors]: [ValidKey<GlobalObject[K]>] extends [never] ? never : K;
   }[GlobalConstructors]
 >;
-type FuncProps = "length" | "name" | "prototype";
+export type FuncProps = "length" | "name" | "prototype";
 const funcProps = new Set(["length", "name", "prototype"]);
 
-type FilterValidKeys<K extends string> = Exclude<K, FuncProps>;
-type ValidKey<V> = FilterValidKeys<StringKey<V>>;
-type SupportedPlatform = "browser" | "node";
-type FuncKind = `func${"" | "-bind"}`;
-type PropKind = "constant" | "prop";
-type MemberKind = FuncKind | PropKind;
+export type FilterValidKeys<K extends string> = Exclude<K, FuncProps>;
+export type ValidKey<V> = FilterValidKeys<StringKey<V>>;
+export type SupportedPlatform = "browser" | "node";
+export type FuncKind = `func${"" | "-bind"}`;
+export type PropKind = "constant" | "prop";
+export type MemberKind = FuncKind | PropKind;
 
 export type ProxyHandleRule = GeneralNode<any>;
 
-type MembersOf<V> = {
+export type MembersOf<V> = {
   [P in ValidKey<V>]: V[P] extends AnyFunc ? FuncKind : PropKind;
 };
 
-type ObjectNode<V extends object> = {
+export type ObjectNode<V extends object> = {
   type: "object";
   members: MembersOf<V>;
 };
-type ConstructorNode<C extends object> = {
+export type ConstructorNode<C extends object> = {
   type: "constructor";
   members: MembersOf<C>;
 };
 
-type FuncNode = {
+export type FuncNode = {
   type: "func";
   name: string;
 };
 
-type NullNode = "noop";
-/**
- * @internal
- */
+export type NullNode = "noop";
+
 export type NormalNode<V extends object> = ConstructorNode<V> | FuncNode | ObjectNode<V>;
 
-type LeafNode<V extends object> = NormalNode<V> | NullNode;
+export type LeafNode<V extends object> = NormalNode<V> | NullNode;
 
-type PlatformNode<S extends object, N = LeafNode<S>> = {
+export type PlatformNode<S extends object, N = LeafNode<S>> = {
   type: "platform";
   diffs: Record<SupportedPlatform, N | NullNode>;
 };
 
-type GeneralNode<T extends object> = PlatformNode<T> | LeafNode<T>;
+export type GeneralNode<T extends object> = PlatformNode<T> | LeafNode<T>;
 
 type ExtractGlobalMapWithKeys<Keys extends GlobalNames<any>> = {
   [K in Keys]: GlobalObject[K] extends infer V extends object
