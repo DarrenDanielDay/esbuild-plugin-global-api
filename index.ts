@@ -105,7 +105,7 @@ export const simplifyGlobalAPI = (options?: PluginOptions): ESBuildPlugin => {
         initialOptions: { platform: _platform },
       } = builder;
       const platform = !_platform || _platform === "neutral" ? "node" : _platform;
-      const { constructors: _constructors, vars: _vars, lib: _lib } = Object.assign({}, defaultOptions, options);
+      const { constructors: _constructors, vars: _vars, lib: _lib, pure } = Object.assign({}, defaultOptions, options);
       const constructors = Array.isArray(_constructors)
         ? _constructors.reduce<ApplyMapping>((acc, ctor) => {
             const applyRule = defaultProxyNamespaceRule(ctor);
@@ -167,9 +167,9 @@ export const simplifyGlobalAPI = (options?: PluginOptions): ESBuildPlugin => {
                   switch (node.members[member]!) {
                     case "constant":
                     case "func":
-                      return `const ${member}=${pureComment}${namespace}.${member};`;
+                      return `const ${member}=${pure ? pureComment : ""}${namespace}.${member};`;
                     case "func-bind":
-                      return `const ${member}=${pureComment}${namespace}.${member}.bind(${namespace});`;
+                      return `const ${member}=${pure ? pureComment : ""}${namespace}.${member}.bind(${namespace});`;
                     default:
                       // Ignore the property. Property read should be skipped in `applyTo`.
                       return ``;
