@@ -1,6 +1,6 @@
 {
   "name": "esbuild-plugin-global-api",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "An esbuild plugin for simplifying global API calls.",
   "main": "index.js",
   "files": [
