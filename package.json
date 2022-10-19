@@ -4,6 +4,7 @@
   "description": "An esbuild plugin for simplifying global API calls.",
   "main": "index.js",
   "files": [
+    "tsconfig.json",
     "index.js",
     "index.js.map",
     "index.ts",
